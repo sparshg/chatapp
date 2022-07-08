@@ -151,7 +151,6 @@ class _MainState extends State<Main> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           TextField(
-            autofocus: true,
             decoration: InputDecoration(
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(40.0),
