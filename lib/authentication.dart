@@ -1,8 +1,10 @@
 import 'package:chatapp/database.dart';
 import 'package:chatapp/styles.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
-
+import 'applicationstate.dart';
 import 'widgets.dart';
 
 enum ApplicationLoginState {
@@ -81,56 +83,7 @@ class Authentication extends StatelessWidget {
           },
         );
       case ApplicationLoginState.loggedIn:
-        final _controller = TextEditingController();
-        final s = _SearchController();
-        return Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TextField(
-              decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(40.0),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.all(20),
-                  filled: true,
-                  hintStyle: TextStyle(color: Colors.grey[800]),
-                  hintText: "Search people",
-                  fillColor: Colors.grey.shade200),
-              controller: _controller,
-              onChanged: (String st) => s.callback(st),
-            ),
-            const SizedBox(height: 20),
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(30),
-                child: Center(
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: Database.retrieveUsers(),
-                    builder: (BuildContext context,
-                        AsyncSnapshot<QuerySnapshot> snapshot) {
-                      if (snapshot.hasError) {
-                        return const Text("Error");
-                      }
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Text("Loading...");
-                      }
-                      final data = snapshot.requireData;
-                      return People(controller: s, snapshot: data);
-                    },
-                  ),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Button(
-                callback: signOut,
-                text: "Logout",
-              ),
-            ),
-          ],
-        );
+        return const Main();
       default:
         return Row(
           children: const [
@@ -180,11 +133,358 @@ class _SearchController {
   void Function(String s) callback = (String s) {};
 }
 
+class Main extends StatefulWidget {
+  const Main({Key? key}) : super(key: key);
+  @override
+  State<Main> createState() => _MainState();
+}
+
+class _MainState extends State<Main> {
+  final _controller = TextEditingController();
+  final s = _SearchController();
+  TextEditingController message = TextEditingController();
+  final FocusNode focusNode = FocusNode();
+
+  int page = 1;
+
+  Widget showUsers() => Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          TextField(
+            autofocus: true,
+            decoration: InputDecoration(
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(40.0),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.all(20),
+                filled: true,
+                hintStyle: TextStyle(color: Colors.grey[600]),
+                hintText: "Search",
+                fillColor: Colors.grey.shade200),
+            controller: _controller,
+            onChanged: (String st) => s.callback(st),
+          ),
+          const SizedBox(height: 20),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(30),
+              child: Center(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: Database.retrieveUsers(),
+                  builder: (BuildContext context,
+                      AsyncSnapshot<QuerySnapshot> snapshot) {
+                    if (snapshot.hasError) {
+                      return const Text("Error");
+                    }
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const CircularProgressIndicator();
+                    }
+                    final data = snapshot.requireData;
+
+                    return People(
+                        controller: s,
+                        snapshot: data,
+                        quit: () => setState(() => page = 1));
+                  },
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+      );
+  void showChat(String roomid, String roomname) {
+    final ScrollController _controller = ScrollController();
+    void _scrollDown() {
+      _controller.animateTo(
+        _controller.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.fastOutSlowIn,
+      );
+    }
+
+    Navigator.push(context,
+        MaterialPageRoute<void>(builder: (BuildContext context) {
+      return SafeArea(
+        child: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.grey.shade300,
+                        radius: 25,
+                        child: IconButton(
+                          onPressed: () =>
+                              setState(() => Navigator.pop(context)),
+                          icon: const Icon(Icons.arrow_back),
+                        ),
+                      ),
+                      FittedBox(
+                        child: Container(
+                          padding: const EdgeInsets.all(5.0),
+                          decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(40.0),
+                              color: Colors.grey.shade300),
+                          child: IconAndDetail(Icons.person, roomname),
+                        ),
+                      ),
+                      CircleAvatar(
+                        backgroundColor: Colors.grey.shade300,
+                        radius: 25,
+                        child: IconButton(
+                          onPressed: () => Database.deleteRoom(roomid).then(
+                              (_) => setState(() => Navigator.pop(context))),
+                          icon: Icon(Icons.delete,
+                              color: Colors.redAccent.shade700),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot>(
+                        stream: Database.retrieveChats(roomid),
+                        builder: (BuildContext context,
+                            AsyncSnapshot<QuerySnapshot> snapshot) {
+                          if (snapshot.hasError) {
+                            return const Text("Error");
+                          }
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          final data = snapshot.requireData.docs;
+                          WidgetsBinding.instance
+                              .addPostFrameCallback((_) => _scrollDown());
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 24.0),
+                            child: ListView.builder(
+                                controller: _controller,
+                                physics: const BouncingScrollPhysics(),
+                                itemCount: data.length,
+                                itemBuilder: (context, index) {
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 4.0),
+                                    child: Row(
+                                      mainAxisAlignment: data[index]
+                                                  ['userName'] ==
+                                              Provider.of<ApplicationState>(
+                                                      context,
+                                                      listen: false)
+                                                  .name
+                                          ? MainAxisAlignment.end
+                                          : MainAxisAlignment.start,
+                                      children: [
+                                        if (data[index]['userName'] ==
+                                            Provider.of<ApplicationState>(
+                                                    context,
+                                                    listen: false)
+                                                .name)
+                                          const Spacer(),
+                                        Flexible(
+                                          flex: 3,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 15.0, vertical: 10),
+                                            decoration: BoxDecoration(
+                                                borderRadius:
+                                                    BorderRadius.circular(25.0),
+                                                color: Colors.grey.shade300),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Wrap(
+                                                  children: [
+                                                    const Icon(Icons.person),
+                                                    const SizedBox(width: 6),
+                                                    Text(
+                                                      data[index]['userName'],
+                                                      style: const TextStyle(
+                                                          fontSize: 16),
+                                                    ),
+                                                    const SizedBox(width: 6),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 10),
+                                                Text(
+                                                  data[index]['message'],
+                                                  style: const TextStyle(
+                                                      fontSize: 18),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        if (data[index]['userName'] !=
+                                            Provider.of<ApplicationState>(
+                                                    context,
+                                                    listen: false)
+                                                .name)
+                                          const Spacer()
+                                      ],
+                                    ),
+                                  );
+                                }),
+                          );
+                        }),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(40.0),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 25, vertical: 10),
+                            filled: true,
+                            hintStyle: TextStyle(color: Colors.grey[600]),
+                            hintText: "Message",
+                            fillColor: Colors.grey.shade300,
+                          ),
+                          controller: message,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      CircleAvatar(
+                        backgroundColor: Colors.grey.shade300,
+                        radius: 25,
+                        child: IconButton(
+                          onPressed: () {
+                            setState(() => pushMessage(roomid));
+                            FocusScope.of(context).requestFocus(focusNode);
+                          },
+                          icon: const Icon(Icons.send_rounded),
+                        ),
+                      ),
+                    ],
+                  ),
+                ]),
+          ),
+        ),
+      );
+    }));
+  }
+
+  void pushMessage(String roomid) {
+    if (message.text.isEmpty) return;
+    Database.pushMessage(message.text, roomid);
+    message.text = "";
+  }
+
+  Widget showMain() => Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          ElevatedButton.icon(
+              onPressed: () => setState(() => page = 2),
+              icon: const Icon(Icons.add),
+              style: ElevatedButton.styleFrom(
+                shape: const StadiumBorder(),
+                onPrimary: Colors.grey.shade800,
+                primary: Colors.grey.shade200,
+                elevation: 1,
+                minimumSize: const Size.fromHeight(50),
+              ),
+              label: const Text("Create Room",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500))),
+          const SizedBox(height: 20),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(30),
+              child: Center(
+                child: FutureBuilder<List>(
+                  future: Database.retrieveRooms(
+                      FirebaseAuth.instance.currentUser!.uid),
+                  builder:
+                      (BuildContext context, AsyncSnapshot<List> snapshot) {
+                    if (snapshot.hasError || snapshot.data?.length == 0) {
+                      return Column(
+                        children: [
+                          const Spacer(),
+                          const Icon(Icons.add,
+                              size: 256,
+                              color: Color.fromARGB(255, 200, 200, 200)),
+                          Text(
+                            "Rooms not found\n",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 16, color: Colors.grey.shade500),
+                          ),
+                          const Spacer(flex: 2),
+                        ],
+                      );
+                    }
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const CircularProgressIndicator();
+                    }
+                    final data = snapshot.requireData;
+                    return ListView.builder(
+                      physics: const BouncingScrollPhysics(),
+                      itemCount: data.length,
+                      padding: EdgeInsets.zero,
+                      itemBuilder: (context, index) {
+                        String title = (data[index]['users']
+                              ..remove(Provider.of<ApplicationState>(context,
+                                      listen: false)
+                                  .name))
+                            .join(", ");
+                        return Card(
+                          child: ListTile(
+                            leading: const Icon(Icons.person),
+                            title: Text(title),
+                            contentPadding: const EdgeInsets.symmetric(
+                                vertical: 12, horizontal: 24),
+                            onTap: () {
+                              showChat(data[index].id, title);
+                            },
+                          ),
+                          color: Colors.grey.shade200,
+                          margin: const EdgeInsets.only(bottom: 4),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: index == data.length - 1
+                                  ? Styles.bottomListBorder
+                                  : BorderRadius.circular(0)),
+                          elevation: 0,
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return page == 1 ? showMain() : showUsers();
+  }
+}
+
 class People extends StatefulWidget {
-  const People({Key? key, required this.controller, required this.snapshot})
+  const People(
+      {Key? key,
+      required this.controller,
+      required this.snapshot,
+      required this.quit})
       : super(key: key);
   final QuerySnapshot<Object?> snapshot;
   final _SearchController controller;
+  final void Function() quit;
 
   @override
   State<StatefulWidget> createState() => _PeopleState();
@@ -192,6 +492,7 @@ class People extends StatefulWidget {
 
 class _PeopleState extends State<People> {
   String? search;
+  List<int> selected = [];
 
   @override
   void initState() {
@@ -202,33 +503,92 @@ class _PeopleState extends State<People> {
   @override
   Widget build(BuildContext context) {
     var data = widget.snapshot.docs;
+    data.removeWhere(
+        (user) => user.id == FirebaseAuth.instance.currentUser!.uid);
     if (search != null) {
       data = data
           .where((user) =>
               user["userName"].toLowerCase().contains(search?.toLowerCase()))
           .toList();
     }
-    return ListView.builder(
-        physics: const BouncingScrollPhysics(),
-        itemCount: data.length,
-        padding: EdgeInsets.zero,
-        itemBuilder: (context, index) {
-          return Card(
-            child: ListTile(
-              leading: const Icon(Icons.person),
-              title: Text(data[index]["userName"]),
-              contentPadding:
-                  const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
-            ),
-            color: Colors.grey.shade200,
-            margin: const EdgeInsets.only(bottom: 4),
-            shape: RoundedRectangleBorder(
-                borderRadius: index == data.length - 1
-                    ? Styles.bottomListBorder
-                    : BorderRadius.circular(0)),
-            elevation: 0,
-          );
-        });
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: ListView.builder(
+              physics: const BouncingScrollPhysics(),
+              itemCount: data.length,
+              padding: EdgeInsets.zero,
+              itemBuilder: (context, index) {
+                return Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.person),
+                    title: Text(data[index]["userName"]),
+                    contentPadding: const EdgeInsets.symmetric(
+                        vertical: 12, horizontal: 24),
+                    onTap: () {
+                      if (!selected.contains(index)) {
+                        setState(() => selected.add(index));
+                      } else {
+                        setState(() => selected.remove(index));
+                      }
+                    },
+                  ),
+                  color: selected.contains(index)
+                      ? const Color.fromARGB(255, 210, 210, 210)
+                      : Colors.grey.shade200,
+                  margin: const EdgeInsets.only(bottom: 4),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: index == data.length - 1
+                          ? Styles.bottomListBorder
+                          : BorderRadius.circular(0)),
+                  elevation: 0,
+                );
+              }),
+        ),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          height: selected.isEmpty ? 0 : 50,
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.bottomCenter,
+          child: ElevatedButton.icon(
+              onPressed: () {
+                Database.createRoom(
+                        FirebaseAuth.instance.currentUser!.uid,
+                        FirebaseAuth.instance.currentUser!.displayName!,
+                        selected.map((i) => data[i].id).toList(),
+                        selected
+                            .map((i) => data[i]['userName'] as String)
+                            .toList())
+                    .then((_) => widget.quit());
+              },
+              icon: const Icon(Icons.check),
+              style: ElevatedButton.styleFrom(
+                  onPrimary: Colors.grey.shade200,
+                  primary: Colors.green.shade300,
+                  elevation: 0,
+                  minimumSize: const Size.fromHeight(50)),
+              label: const Text("")),
+        ),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          height: selected.isEmpty ? 50 : 0,
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.bottomCenter,
+          child: ElevatedButton.icon(
+              onPressed: () {
+                widget.quit();
+              },
+              icon: const Icon(Icons.close),
+              style: ElevatedButton.styleFrom(
+                  onPrimary: Colors.grey.shade200,
+                  primary: Colors.red.shade300,
+                  elevation: 0,
+                  minimumSize: const Size.fromHeight(50)),
+              label: const Text("")),
+        ),
+      ],
+    );
   }
 }
 
