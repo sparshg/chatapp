@@ -146,6 +146,7 @@ class _MainState extends State<Main> {
   final FocusNode focusNode = FocusNode();
 
   int page = 1;
+  bool dm = false;
 
   Widget showUsers() => Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -247,11 +248,11 @@ class _MainState extends State<Main> {
                   ),
                   Expanded(
                     child: StreamBuilder<QuerySnapshot>(
-                        stream: Database.retrieveChats(roomid),
+                        stream: Database.retrieveChats(roomid, dm),
                         builder: (BuildContext context,
                             AsyncSnapshot<QuerySnapshot> snapshot) {
                           if (snapshot.hasError) {
-                            return const Text("Error");
+                            return const Text("");
                           }
                           if (snapshot.connectionState ==
                               ConnectionState.waiting) {
@@ -274,7 +275,7 @@ class _MainState extends State<Main> {
                                         vertical: 4.0),
                                     child: Row(
                                       mainAxisAlignment: data[index]
-                                                  ['userName'] ==
+                                                  ['sendBy'] ==
                                               Provider.of<ApplicationState>(
                                                       context,
                                                       listen: false)
@@ -282,7 +283,7 @@ class _MainState extends State<Main> {
                                           ? MainAxisAlignment.end
                                           : MainAxisAlignment.start,
                                       children: [
-                                        if (data[index]['userName'] ==
+                                        if (data[index]['sendBy'] ==
                                             Provider.of<ApplicationState>(
                                                     context,
                                                     listen: false)
@@ -306,7 +307,7 @@ class _MainState extends State<Main> {
                                                     const Icon(Icons.person),
                                                     const SizedBox(width: 6),
                                                     Text(
-                                                      data[index]['userName'],
+                                                      data[index]['sendBy'],
                                                       style: const TextStyle(
                                                           fontSize: 16),
                                                     ),
@@ -323,7 +324,7 @@ class _MainState extends State<Main> {
                                             ),
                                           ),
                                         ),
-                                        if (data[index]['userName'] !=
+                                        if (data[index]['sendBy'] !=
                                             Provider.of<ApplicationState>(
                                                     context,
                                                     listen: false)
@@ -380,36 +381,59 @@ class _MainState extends State<Main> {
 
   void pushMessage(String roomid) {
     if (message.text.isEmpty) return;
-    Database.pushMessage(message.text, roomid);
+    Database.pushMessage(message.text, roomid, dm);
     message.text = "";
   }
 
   Widget showMain() => Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          ElevatedButton.icon(
-              onPressed: () => setState(() => page = 2),
-              icon: const Icon(Icons.add),
-              style: ElevatedButton.styleFrom(
-                shape: const StadiumBorder(),
-                onPrimary: Colors.grey.shade800,
-                primary: Colors.grey.shade200,
-                elevation: 1,
-                minimumSize: const Size.fromHeight(50),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                    onPressed: () => setState(() => page = 2),
+                    icon: const Icon(Icons.add),
+                    style: ElevatedButton.styleFrom(
+                      shape: const StadiumBorder(),
+                      onPrimary: Colors.grey.shade800,
+                      primary: Colors.grey.shade200,
+                      elevation: 1,
+                      minimumSize: const Size.fromHeight(50),
+                    ),
+                    label: const Text("Add Chat",
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w500))),
               ),
-              label: const Text("Create Room",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500))),
+              SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                    onPressed: () => setState(() => dm = !dm),
+                    icon: Icon(dm ? Icons.group : Icons.message_rounded),
+                    style: ElevatedButton.styleFrom(
+                      shape: const StadiumBorder(),
+                      onPrimary: Colors.grey.shade800,
+                      primary: Colors.grey.shade200,
+                      elevation: 1,
+                      minimumSize: const Size.fromHeight(50),
+                    ),
+                    label: Text(dm ? "Show Rooms" : "Show DMs",
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w500))),
+              ),
+            ],
+          ),
           const SizedBox(height: 20),
           Expanded(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(30),
               child: Center(
-                child: FutureBuilder<List>(
-                  future: Database.retrieveRooms(
-                      FirebaseAuth.instance.currentUser!.uid),
-                  builder:
-                      (BuildContext context, AsyncSnapshot<List> snapshot) {
-                    if (snapshot.hasError || snapshot.data?.length == 0) {
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: Database.retrieveRooms(dm),
+                  builder: (BuildContext context,
+                      AsyncSnapshot<QuerySnapshot> snapshot) {
+                    final data = snapshot.data!.docs;
+                    if (snapshot.hasError || data.isEmpty) {
                       return Column(
                         children: [
                           const Spacer(),
@@ -429,17 +453,20 @@ class _MainState extends State<Main> {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const CircularProgressIndicator();
                     }
-                    final data = snapshot.requireData;
+
                     return ListView.builder(
                       physics: const BouncingScrollPhysics(),
                       itemCount: data.length,
                       padding: EdgeInsets.zero,
                       itemBuilder: (context, index) {
-                        String title = (data[index]['users']
-                              ..remove(Provider.of<ApplicationState>(context,
-                                      listen: false)
-                                  .name))
-                            .join(", ");
+                        String title = dm
+                            ? data[index]['users']
+                                .where((i) =>
+                                    i !=
+                                    FirebaseAuth
+                                        .instance.currentUser!.displayName!)
+                                .single
+                            : data[index]['groupName'];
                         return Card(
                           child: ListTile(
                             leading: const Icon(Icons.person),
@@ -487,6 +514,71 @@ class People extends StatefulWidget {
 
   @override
   State<StatefulWidget> createState() => _PeopleState();
+}
+
+class Popup extends StatefulWidget {
+  const Popup({Key? key, this.val = '', required this.callback})
+      : super(key: key);
+  final String val;
+  final void Function(String) callback;
+
+  @override
+  State<Popup> createState() => _PopupState();
+}
+
+class _PopupState extends State<Popup> {
+  late TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _controller.value = TextEditingValue(text: widget.val);
+    _controller.selection = TextSelection.fromPosition(
+        TextPosition(offset: _controller.text.length));
+
+    return Container(
+      height: 200,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(30),
+        ),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(36),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              "Enter Room name",
+              style: TextStyle(fontSize: 36),
+            ),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              onSubmitted: (String value) {
+                widget.callback(value);
+                Navigator.of(context).pop();
+              },
+            )
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _PeopleState extends State<People> {
@@ -552,14 +644,29 @@ class _PeopleState extends State<People> {
           alignment: Alignment.bottomCenter,
           child: ElevatedButton.icon(
               onPressed: () {
-                Database.createRoom(
-                        FirebaseAuth.instance.currentUser!.uid,
-                        FirebaseAuth.instance.currentUser!.displayName!,
-                        selected.map((i) => data[i].id).toList(),
-                        selected
-                            .map((i) => data[i]['userName'] as String)
-                            .toList())
-                    .then((_) => widget.quit());
+                if (selected.length == 1) {
+                  Database.createDm(data[selected[0]]['userEmail'])
+                      .then((_) => widget.quit());
+                  return;
+                }
+                showModalBottomSheet(
+                  isScrollControlled: true,
+                  context: context,
+                  builder: (BuildContext context) => Padding(
+                    padding: MediaQuery.of(context).viewInsets,
+                    child: Popup(callback: (name) {
+                      Database.createRoom(
+                              FirebaseAuth.instance.currentUser!.uid,
+                              FirebaseAuth.instance.currentUser!.displayName!,
+                              selected.map((i) => data[i].id).toList(),
+                              selected
+                                  .map((i) => data[i]['userName'] as String)
+                                  .toList(),
+                              name)
+                          .then((_) => widget.quit());
+                    }),
+                  ),
+                );
               },
               icon: const Icon(Icons.check),
               style: ElevatedButton.styleFrom(
